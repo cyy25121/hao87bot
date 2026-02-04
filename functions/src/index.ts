@@ -9,10 +9,14 @@ initializeApp();
 // 定義需要的 secrets
 const telegramBotToken = defineSecret('TELEGRAM_BOT_TOKEN');
 const openaiApiKey = defineSecret('OPENAI_API_KEY');
+const ngrokOllamaUrl = defineSecret('NGROK_OLLAMA_URL');
 
 // Telegram Webhook
 export const telegramWebhook = onRequest(
-  { secrets: [telegramBotToken, openaiApiKey] },
+  { 
+    secrets: [telegramBotToken, openaiApiKey, ngrokOllamaUrl],
+    timeoutSeconds: 540, // Cloud Functions v2 HTTP 觸發最高 9 分鐘（540 秒）
+  },
   async (req, res) => {
     // 只接受 POST 請求
     if (req.method !== 'POST') {

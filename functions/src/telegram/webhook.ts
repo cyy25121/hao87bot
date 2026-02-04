@@ -1,16 +1,25 @@
 import { TelegramUpdate, TelegramMessage } from '../types';
 import { StatsService } from '../services/statsService';
+import { callOllama } from '../services/ollamaService';
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 
 /**
  * 發送文字訊息到 Telegram
  */
-async function sendMessage(chatId: number, text: string): Promise<void> {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) {
-    throw new Error('Bot token not configured');
+/**
+ * 取得環境變數（從 Firebase Secrets）
+ */
+function getEnvVar(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} 環境變數未設定`);
   }
+  return value;
+}
+
+async function sendMessage(chatId: number, text: string): Promise<void> {
+  const botToken = getEnvVar('TELEGRAM_BOT_TOKEN');
 
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
@@ -31,7 +40,13 @@ async function sendMessage(chatId: number, text: string): Promise<void> {
 }
 
 /**
+ * 舊版 mention 回應功能開關（暫時停用）
+ */
+const ENABLE_LEGACY_MENTION_RESPONSE = false;
+
+/**
  * 無反應訊息列表（50 個）
+ * @deprecated 暫時停用，改用 Ollama AI 回應
  */
 const NO_RESPONSE_MESSAGES = [
   '(毫無反應...)',
@@ -89,6 +104,7 @@ const NO_RESPONSE_MESSAGES = [
 
 /**
  * 取得隨機無反應訊息
+ * @deprecated 暫時停用，改用 Ollama AI 回應
  */
 function getRandomNoResponseMessage(): string {
   return NO_RESPONSE_MESSAGES[Math.floor(Math.random() * NO_RESPONSE_MESSAGES.length)];
@@ -98,6 +114,7 @@ function getRandomNoResponseMessage(): string {
  * 統計網頁連結訊息列表（50 個）
  * 5種類型：川普相關、賺大錢、遊戲上市、吉伊卡哇、蝦蝦飯飯清涼照
  * 連結隱藏在特定名詞中，誘使成員點擊
+ * @deprecated 暫時停用，改用 Ollama AI 回應
  */
 function getStatsLinkMessages(groupId: number): string[] {
   const statsUrl = `https://hao87bot-45efb.web.app/stats/${groupId}`;
@@ -216,10 +233,35 @@ function getStatsLinkMessages(groupId: number): string[] {
 
 /**
  * 取得隨機統計連結訊息
+ * @deprecated 暫時停用，改用 Ollama AI 回應
  */
 function getRandomStatsLinkMessage(groupId: number): string {
   const messages = getStatsLinkMessages(groupId);
   return messages[Math.floor(Math.random() * messages.length)];
+}
+
+/**
+ * 舊版 mention 回應處理（暫時停用）
+ * @deprecated 改用 Ollama AI 回應
+ */
+async function handleLegacyMentionResponse(
+  chatId: number,
+  groupId: number,
+  isActivated: boolean
+): Promise<void> {
+  if (!ENABLE_LEGACY_MENTION_RESPONSE) {
+    return;
+  }
+
+  if (!isActivated) {
+    // 未達閾值：回覆無反應訊息
+    const noResponseMsg = getRandomNoResponseMessage();
+    await sendMessage(chatId, noResponseMsg);
+  } else {
+    // 超過閾值：回覆統計網頁連結
+    const statsMsg = getRandomStatsLinkMessage(groupId);
+    await sendMessage(chatId, statsMsg);
+  }
 }
 
 /**
@@ -429,6 +471,75 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     return;
   }
 
+  // 處理 /show 命令（僅在群組中使用）
+  if (message.text && (message.text.trim() === '/show' || message.text.trim().startsWith('/show@'))) {
+    // 只處理群組訊息
+    if (chat.type !== 'group' && chat.type !== 'supergroup') {
+      await sendMessage(chatId, '❌ /show 指令只能在群組中使用');
+      return;
+    }
+
+    try {
+      const groupId = chatId;
+      const group = await StatsService.getOrCreateGroup(groupId, chat.title || 'Unknown Group');
+      const members = await StatsService.getGroupMembers(groupId);
+      const lastRestartTime = await StatsService.getLastRestartTime();
+      
+      const statsUrl = `https://hao87bot-45efb.web.app/stats/${groupId}`;
+      
+      // 格式化重啟時間
+      let restartTimeText = '尚未重啟';
+      if (lastRestartTime) {
+        const restartDate = lastRestartTime.toDate();
+        const now = new Date();
+        const diffMs = now.getTime() - restartDate.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+        
+        if (diffDays > 0) {
+          restartTimeText = `${diffDays} 天前（${restartDate.toLocaleString('zh-TW')}）`;
+        } else if (diffHours > 0) {
+          restartTimeText = `${diffHours} 小時前（${restartDate.toLocaleString('zh-TW')}）`;
+        } else if (diffMins > 0) {
+          restartTimeText = `${diffMins} 分鐘前（${restartDate.toLocaleString('zh-TW')}）`;
+        } else {
+          restartTimeText = `剛剛（${restartDate.toLocaleString('zh-TW')}）`;
+        }
+      }
+      
+      // 取得前 5 名成員
+      const topMembers = members.slice(0, 5);
+      
+      // 建立回應訊息
+      let message = `<b>📊 群組統計資訊</b>\n\n`;
+      message += `🔗 <a href="${statsUrl}">查看完整統計</a>\n\n`;
+      message += `<b>群組統計：</b>\n`;
+      message += `📝 訊息數：${group.messageCount}\n`;
+      message += `🔗 連結數：${group.linkCount || 0}\n`;
+      message += `📷 圖片數：${group.photoCount || 0}\n`;
+      message += `😊 貼圖數：${group.stickerCount || 0}\n\n`;
+      
+      if (topMembers.length > 0) {
+        message += `<b>🏆 活躍成員 Top 5：</b>\n`;
+        topMembers.forEach((member, index) => {
+          const name = member.firstName || member.username || `用戶 ${member.userId}`;
+          message += `${index + 1}. ${name}：${member.messageCount} 則訊息\n`;
+        });
+        message += `\n`;
+      }
+      
+      message += `<b>🔄 系統狀態：</b>\n`;
+      message += `上次重啟：${restartTimeText}`;
+      
+      await sendMessage(chatId, message);
+    } catch (error) {
+      console.error('Error showing stats:', error);
+      await sendMessage(chatId, '❌ 無法取得統計資料，請稍後再試');
+    }
+    return;
+  }
+
   // 只處理群組訊息（非命令）
   if (chat.type !== 'group' && chat.type !== 'supergroup') {
     return;
@@ -446,17 +557,26 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     const isActivated = group.messageCount >= globalThreshold;
     
     if (isBotMentioned(message, botUsername)) {
-      if (!isActivated) {
-        // 未達閾值：回覆無反應訊息
-        const noResponseMsg = getRandomNoResponseMessage();
-        await sendMessage(chatId, noResponseMsg);
-        return; // 不處理其他邏輯
-      } else {
-        // 超過閾值：回覆統計網頁連結
-        const statsMsg = getRandomStatsLinkMessage(groupId);
-        await sendMessage(chatId, statsMsg);
-        return; // 不處理其他邏輯
+      // 舊版回應邏輯（暫時停用）
+      if (ENABLE_LEGACY_MENTION_RESPONSE) {
+        await handleLegacyMentionResponse(chatId, groupId, isActivated);
+        return;
       }
+
+      // 新版：使用 Ollama AI 回應
+      try {
+        const userMessage = message.text || message.caption || '';
+        const aiResponse = await callOllama(userMessage);
+        await sendMessage(chatId, aiResponse);
+      } catch (error) {
+        console.error('[handleMessage] Ollama 錯誤:', error);
+        // 如果 Ollama 服務失敗，回覆錯誤訊息
+        const errorMessage = error instanceof Error 
+          ? `🤖 抱歉，我現在無法回應。錯誤：${error.message}`
+          : '🤖 抱歉，我現在無法回應，請稍後再試。';
+        await sendMessage(chatId, errorMessage);
+      }
+      return; // 不處理其他邏輯
     }
 
     // 判斷訊息類型和內容
@@ -470,12 +590,18 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       messageType = 'sticker';
       messageText = message.sticker.emoji || '貼圖';
       await StatsService.incrementStickerCount(groupId);
-      await StatsService.recordStickerUsage(groupId, userId, {
-        file_unique_id: message.sticker.file_unique_id,
-        file_id: message.sticker.file_id,
-        emoji: message.sticker.emoji,
-        set_name: message.sticker.set_name,
-      });
+      
+      // 確保 file_id 存在（雖然類型定義說它是必需的，但為了安全起見還是檢查）
+      if (message.sticker.file_id && message.sticker.file_unique_id) {
+        await StatsService.recordStickerUsage(groupId, userId, {
+          file_unique_id: message.sticker.file_unique_id,
+          file_id: message.sticker.file_id,
+          emoji: message.sticker.emoji,
+          set_name: message.sticker.set_name,
+        });
+      } else {
+        console.warn('[handleMessage] Sticker missing file_id or file_unique_id:', message.sticker);
+      }
     }
     // 檢查是否有圖片
     else if (message.photo && message.photo.length > 0) {

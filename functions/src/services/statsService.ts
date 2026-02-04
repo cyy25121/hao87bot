@@ -198,9 +198,20 @@ export class StatsService {
           messageCount: currentCount + 1,
           lastMessage: messageText,
           lastActiveAt: now,
-          username: username || data.username,
-          firstName: firstName || data.firstName,
         };
+
+        // 只在值存在時才更新 username 和 firstName（避免 undefined）
+        if (username !== undefined) {
+          updates.username = username;
+        } else if (data.username !== undefined) {
+          updates.username = data.username;
+        }
+
+        if (firstName !== undefined) {
+          updates.firstName = firstName;
+        } else if (data.firstName !== undefined) {
+          updates.firstName = data.firstName;
+        }
 
         // 根據訊息類型更新對應計數
         if (messageType === 'link') {
@@ -216,10 +227,9 @@ export class StatsService {
         // 儲存訊息到歷史記錄
         await this.addRecentMessage(groupId, userId, storedMessage);
       } else {
-        const newMember: MemberStats = {
+        // 建立新成員，只包含非 undefined 的欄位
+        const newMember: any = {
           userId,
-          username,
-          firstName,
           messageCount: 1,
           linkCount: messageType === 'link' ? 1 : 0,
           photoCount: messageType === 'photo' ? 1 : 0,
@@ -228,6 +238,15 @@ export class StatsService {
           recentMessages: [storedMessage],
           lastActiveAt: now,
         };
+
+        // 只在值不是 undefined 時才加入
+        if (username !== undefined) {
+          newMember.username = username;
+        }
+        if (firstName !== undefined) {
+          newMember.firstName = firstName;
+        }
+
         await memberRef.set(newMember);
       }
     } catch (error) {
@@ -348,24 +367,53 @@ export class StatsService {
 
       if (stickerDoc.exists) {
         const currentCount = stickerDoc.data()?.count || 0;
-        await stickerRef.update({
+        const existingData = stickerDoc.data();
+        const updates: any = {
           count: currentCount + 1,
           lastUsedAt: now,
           lastUsedBy: userId,
-          fileId: sticker.file_id || stickerDoc.data()?.fileId,
-          emoji: sticker.emoji || stickerDoc.data()?.emoji,
-          setName: sticker.set_name || stickerDoc.data()?.setName,
-        });
+        };
+
+        // 只在值不是 undefined 時才更新這些欄位
+        if (sticker.file_id !== undefined) {
+          updates.fileId = sticker.file_id;
+        } else if (existingData?.fileId !== undefined) {
+          updates.fileId = existingData.fileId;
+        }
+
+        if (sticker.emoji !== undefined) {
+          updates.emoji = sticker.emoji;
+        } else if (existingData?.emoji !== undefined) {
+          updates.emoji = existingData.emoji;
+        }
+
+        if (sticker.set_name !== undefined) {
+          updates.setName = sticker.set_name;
+        } else if (existingData?.setName !== undefined) {
+          updates.setName = existingData.setName;
+        }
+
+        await stickerRef.update(updates);
       } else {
-        const newSticker: StickerStats = {
+        // 建立新貼圖記錄，只包含非 undefined 的欄位
+        const newSticker: any = {
           fileUniqueId: sticker.file_unique_id,
-          fileId: sticker.file_id,
-          emoji: sticker.emoji,
-          setName: sticker.set_name,
           count: 1,
           lastUsedAt: now,
           lastUsedBy: userId,
         };
+
+        // 只在值不是 undefined 時才加入
+        if (sticker.file_id !== undefined) {
+          newSticker.fileId = sticker.file_id;
+        }
+        if (sticker.emoji !== undefined) {
+          newSticker.emoji = sticker.emoji;
+        }
+        if (sticker.set_name !== undefined) {
+          newSticker.setName = sticker.set_name;
+        }
+
         await stickerRef.set(newSticker);
       }
     } catch (error) {
@@ -439,5 +487,42 @@ export class StatsService {
   static async setThreshold(groupId: number, threshold: number): Promise<void> {
     // 轉換為設定全域閾值
     await this.setGlobalThreshold(threshold);
+  }
+
+  /**
+   * 記錄重啟時間
+   */
+  static async recordRestartTime(): Promise<void> {
+    try {
+      const db = getDb();
+      const settingsRef = db.collection('settings').doc('global');
+      await settingsRef.set({ 
+        lastRestartAt: admin.firestore.Timestamp.now() 
+      }, { merge: true });
+    } catch (error) {
+      console.error(`[StatsService] Error in recordRestartTime:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 取得上一次重啟時間
+   */
+  static async getLastRestartTime(): Promise<FirebaseFirestore.Timestamp | null> {
+    try {
+      const db = getDb();
+      const settingsRef = db.collection('settings').doc('global');
+      const settingsDoc = await settingsRef.get();
+      
+      if (settingsDoc.exists) {
+        const data = settingsDoc.data();
+        return data?.lastRestartAt || null;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error(`[StatsService] Error in getLastRestartTime:`, error);
+      return null;
+    }
   }
 }
