@@ -1,0 +1,19 @@
+{
+  "name": "hao87bot",
+  "version": "3.0.0",
+  "description": "Hao87bot 3.0 - Telegram 群組統計機器人",
+  "scripts": {
+    "install:all": "cd functions && npm install && cd ../frontend && npm install",
+    "build": "cd functions && npm run build && cd ../frontend && npm run build",
+    "dev:functions": "cd functions && npm run serve",
+    "dev:frontend": "cd frontend && npm run dev"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "firebase",
+    "statistics"
+  ],
+  "author": "",
+  "license": "MIT"
+}

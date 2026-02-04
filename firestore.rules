@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 允許公開讀取群組統計
+    match /groups/{groupId} {
+      allow read: if true;
+      allow write: if false;
+      
+      match /members/{memberId} {
+        allow read: if true;
+        allow write: if false;
+      }
+      
+      match /stickers/{stickerId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+  }
+}

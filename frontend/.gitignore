@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+
+# 字體檔案（如果檔案太大，可以加入 .gitignore）
+# public/fonts/*.woff2
