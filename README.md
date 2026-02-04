@@ -8,9 +8,10 @@ Telegram 群組統計機器人，自動統計成員發言次數、連結、圖�
 - 🎨 貼圖排行榜，顯示最受歡迎的貼圖（含圖片預覽）
 - 🌐 像素風格的前端統計頁面（Vue 3 + TypeScript）
 - 🔥 使用 Firebase Functions v2 (Node.js 22) 作為後端
+- 🤖 **AI 智能回應**：透過 Ollama (qwen3:8b) 模型生成自然語言回應
 - 🏥 `/health` 指令進行健康檢查
 - ⚙️ `/set-activate-th` 指令設定全域啟動閾值
-- 🤖 智能回應機制：未達閾值時回覆無反應訊息，超過閾值時回覆統計連結
+- 📊 `/show` 指令顯示群組統計資訊和系統狀態
 
 ## 專案結構
 
@@ -42,11 +43,16 @@ hao87bot.git/
 # 設定 Telegram Bot Token
 echo -n "YOUR_BOT_TOKEN" | firebase functions:secrets:set TELEGRAM_BOT_TOKEN
 
-# 設定 OpenAI API Key
+# 設定 OpenAI API Key（保留以向後兼容）
 echo -n "YOUR_OPENAI_API_KEY" | firebase functions:secrets:set OPENAI_API_KEY
+
+# 設定 ngrok Ollama URL（用於 AI 回應功能）
+echo -n "https://your-ngrok-url.ngrok-free.app" | firebase functions:secrets:set NGROK_OLLAMA_URL
 ```
 
 **本地開發**：在 `functions/.env` 檔案中設定（見 `QUICKSTART.md` 說明）。
+
+**ngrok 設定**：詳見 [NGROK_SETUP.md](NGROK_SETUP.md) 或 [CLOUDFLARE_TUNNEL_SETUP.md](CLOUDFLARE_TUNNEL_SETUP.md)
 
 ## 開發
 
@@ -101,15 +107,22 @@ firebase deploy --only hosting
 
 ## Bot 回應機制
 
-### 未達閾值時
-當群組訊息數未超過設定的閾值，且 bot 被呼叫（使用指令或 @mention）時，bot 會隨機回覆 50 種無反應訊息之一，例如：
-- `(毫無反應...)`
-- `(靜悄悄...)`
-- `(一片寂靜...)`
-- 等等
+### AI 智能回應（預設）
+當 bot 被 @mention 時，會透過 Ollama (qwen3:8b) 模型生成自然語言回應。
 
-### 超過閾值時
-當群組訊息數超過設定的閾值，且 bot 被呼叫時，bot 會隨機回覆 50 種有趣或模仿詐騙訊息的文字之一，並在文字中隱藏統計網頁連結。連結會以可點擊的文字形式呈現，點擊後會開啟該群組的統計頁面。
+**特色**：
+- 使用本地 Ollama 服務（透過 ngrok 連接）
+- 模型：qwen3:8b
+- 回應風格：幽默、機智、半開玩笑
+- 使用繁體中文回應
+
+**設定要求**：
+- 需要本地運行 Ollama 服務
+- 需要設定 ngrok 或 Cloudflare Tunnel 來暴露 Ollama 服務
+- 詳見 [NGROK_SETUP.md](NGROK_SETUP.md)
+
+### 舊版回應機制（已停用）
+舊版的無反應訊息和統計連結回應機制已暫時停用，可透過設定 `ENABLE_LEGACY_MENTION_RESPONSE` 重新啟用。
 
 **閾值設定**：
 - 預設值：100 則訊息
@@ -174,6 +187,41 @@ Hao87bot 3.0 健康檢查
 - 任何群組成員都可以設定，建議在私訊中設定以避免誤觸
 - 預設值為 100 則訊息
 
+### `/show`
+顯示群組統計資訊和系統狀態。**僅能在群組中使用**。
+
+**使用方式：**
+- 在群組中發送 `/show`
+
+**顯示內容：**
+- 群組統計網址（可點擊連結）
+- 群組統計資料（訊息數、連結數、圖片數、貼圖數）
+- 活躍成員 Top 5
+- 系統狀態（上次重啟時間）
+
+**回應範例：**
+```
+📊 群組統計資訊
+
+🔗 查看完整統計
+
+群組統計：
+📝 訊息數：1234
+🔗 連結數：56
+📷 圖片數：78
+😊 貼圖數：234
+
+🏆 活躍成員 Top 5：
+1. 張三：456 則訊息
+2. 李四：234 則訊息
+3. 王五：123 則訊息
+4. 趙六：89 則訊息
+5. 錢七：67 則訊息
+
+🔄 系統狀態：
+上次重啟：2 小時前（2026/2/4 下午9:30:00）
+```
+
 ## 統計功能
 
 ### 群組統計
@@ -199,3 +247,85 @@ Hao87bot 3.0 健康檢查
 - 自動載入貼圖圖片
 - 滑鼠懸停時放大 2.5 倍
 - 如果圖片載入失敗，會顯示 emoji 作為備用
+
+## AI 回應功能
+
+### 架構
+- **模型**：qwen3:8b（透過 Ollama）
+- **連接方式**：ngrok 或 Cloudflare Tunnel
+- **回應時間**：Cloud Function 執行時間上限為 540 秒（9 分鐘）
+
+### 設定步驟
+1. **安裝並啟動 Ollama**
+   ```bash
+   # 安裝 Ollama（macOS）
+   brew install ollama
+   
+   # 啟動 Ollama（允許外部連線）
+   export OLLAMA_HOST=0.0.0.0:11434
+   ollama serve
+   
+   # 下載模型
+   ollama pull qwen3:8b
+   ```
+
+2. **設定 Tunnel（選擇其一）**
+   
+   **選項 A：ngrok**
+   ```bash
+   # 安裝 ngrok
+   brew install ngrok
+   
+   # 啟動 tunnel
+   ngrok http 11434
+   ```
+   詳見 [NGROK_SETUP.md](NGROK_SETUP.md)
+   
+   **選項 B：Cloudflare Tunnel（推薦）**
+   ```bash
+   # 安裝 cloudflared
+   brew install cloudflared
+   
+   # 啟動 tunnel
+   cloudflared tunnel --url http://localhost:11434
+   ```
+   詳見 [CLOUDFLARE_TUNNEL_SETUP.md](CLOUDFLARE_TUNNEL_SETUP.md)
+
+3. **設定 Firebase Secret**
+   ```bash
+   firebase functions:secrets:set NGROK_OLLAMA_URL
+   # 輸入 tunnel URL（例如：https://xxxx-xxx-xxx.ngrok-free.app）
+   ```
+
+### 系統提示詞
+Bot 使用以下系統提示詞：
+- 身份：hao87bot，Telegram 群組的 AI 機器人助手
+- 個性：幽默、機智、半開玩笑
+- 語言：繁體中文
+- 回應長度：簡潔有力（通常 1-3 句話）
+
+### 未來計劃
+- [ ] Context Management：保存對話歷史，讓 bot 理解群組討論脈絡
+- [ ] 對話記錄：記錄每次 @bot 的問答，用於分析和優化
+- [ ] 智能截斷：處理 context window 限制
+
+詳見 [CONTEXT_MANAGEMENT_PLAN.md](CONTEXT_MANAGEMENT_PLAN.md)
+
+## 技術架構
+
+### 後端
+- Firebase Functions v2 (Node.js 22)
+- Firestore 資料庫（名為 `hao87bot`）
+- Telegram Bot API
+- Ollama (qwen3:8b) 用於 AI 回應
+
+### 前端
+- Vue 3 + TypeScript + Vite
+- Firebase SDK
+- NES.css（像素風格 UI）
+
+### 資料結構
+- `groups/{groupId}`: 群組統計資料
+- `groups/{groupId}/members/{userId}`: 成員統計資料
+- `groups/{groupId}/stickers/{fileUniqueId}`: 貼圖統計
+- `settings/global`: 全域設定（閾值、重啟時間等）
