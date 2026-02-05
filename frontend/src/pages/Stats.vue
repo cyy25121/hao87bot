@@ -176,11 +176,28 @@ let unsubscribeGroup: Unsubscribe | null = null;
 let unsubscribeMembers: Unsubscribe | null = null;
 let unsubscribeStickers: Unsubscribe | null = null;
 
+// 追蹤每個監聽器是否已完成第一次資料獲取
+let groupLoaded = false;
+let membersLoaded = false;
+let stickersLoaded = false;
+
+// 檢查是否所有監聽器都已完成第一次資料獲取
+const checkAllLoaded = () => {
+  if (groupLoaded && membersLoaded && stickersLoaded) {
+    loading.value = false;
+  }
+};
+
 const setupRealtimeListeners = () => {
   // 清理舊的監聽器
   if (unsubscribeGroup) unsubscribeGroup();
   if (unsubscribeMembers) unsubscribeMembers();
   if (unsubscribeStickers) unsubscribeStickers();
+
+  // 重置載入狀態
+  groupLoaded = false;
+  membersLoaded = false;
+  stickersLoaded = false;
 
   if (!id.value) {
     error.value = '缺少群組 ID';
@@ -224,6 +241,10 @@ const setupRealtimeListeners = () => {
   unsubscribeGroup = onSnapshot(
     doc(db, 'groups', groupIdStr),
     (snapshot) => {
+      if (!groupLoaded) {
+        groupLoaded = true;
+      }
+      
       if (snapshot.exists()) {
         const groupData = snapshot.data() as GroupStats;
         if (data.value) {
@@ -234,16 +255,19 @@ const setupRealtimeListeners = () => {
             stickerCount: groupData.stickerCount ?? 0,
           };
         }
-        loading.value = false;
+        checkAllLoaded();
       } else {
         error.value = '找不到群組資料';
-        loading.value = false;
+        checkAllLoaded();
       }
     },
     (err) => {
       console.error('[Stats] Error listening to group:', err);
+      if (!groupLoaded) {
+        groupLoaded = true;
+      }
       error.value = '載入群組資料失敗';
-      loading.value = false;
+      checkAllLoaded();
     }
   );
 
@@ -251,13 +275,23 @@ const setupRealtimeListeners = () => {
   unsubscribeMembers = onSnapshot(
     query(collection(db, 'groups', groupIdStr, 'members'), orderBy('messageCount', 'desc')),
     (snapshot) => {
+      if (!membersLoaded) {
+        membersLoaded = true;
+      }
+      
       if (data.value) {
         data.value.members = snapshot.docs.map((doc) => doc.data() as MemberStats);
       }
+      
+      checkAllLoaded();
     },
     (err) => {
       console.error('[Stats] Error listening to members:', err);
-      // 成員載入失敗不影響整體顯示
+      // 成員載入失敗也視為已完成（不影響整體顯示）
+      if (!membersLoaded) {
+        membersLoaded = true;
+        checkAllLoaded();
+      }
     }
   );
 
@@ -307,10 +341,20 @@ const setupRealtimeListeners = () => {
         
         data.value.stickers = stickers;
       }
+      
+      // 只有在第一次載入時才標記為完成
+      if (!stickersLoaded) {
+        stickersLoaded = true;
+        checkAllLoaded();
+      }
     },
     (err) => {
       console.error('[Stats] Error listening to stickers:', err);
-      // 貼圖載入失敗不影響整體顯示
+      // 貼圖載入失敗也視為已完成（不影響整體顯示）
+      if (!stickersLoaded) {
+        stickersLoaded = true;
+        checkAllLoaded();
+      }
     }
   );
 };
