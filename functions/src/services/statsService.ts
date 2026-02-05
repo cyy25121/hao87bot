@@ -551,7 +551,7 @@ export class StatsService {
   /**
    * 取得 AI 設定
    */
-  static async getAISettings(): Promise<{ systemPrompt: string; model: string }> {
+  static async getAISettings(): Promise<{ systemPrompt: string; model: string; provider: 'ollama' | 'openai' }> {
     try {
       const db = getDb();
       const settingsRef = db.collection('settings').doc('global');
@@ -559,16 +559,22 @@ export class StatsService {
 
       if (settingsDoc.exists) {
         const data = settingsDoc.data();
+        const provider = data?.aiProvider || 'ollama';
+        // 根據 provider 設定預設模型
+        const defaultModel = provider === 'openai' ? 'gpt-4o-mini' : 'qwen3:8b';
+        
         return {
           systemPrompt: data?.aiSystemPrompt || '',
-          model: data?.aiModel || 'qwen3:8b',
+          model: data?.aiModel || defaultModel,
+          provider: provider as 'ollama' | 'openai',
         };
       }
 
-      // 如果不存在，返回預設值
+      // 如果不存在，返回預設值（Ollama）
       return {
         systemPrompt: '',
         model: 'qwen3:8b',
+        provider: 'ollama',
       };
     } catch (error) {
       console.error(`[StatsService] Error in getAISettings:`, error);
@@ -576,6 +582,7 @@ export class StatsService {
       return {
         systemPrompt: '',
         model: 'qwen3:8b',
+        provider: 'ollama',
       };
     }
   }
@@ -583,7 +590,7 @@ export class StatsService {
   /**
    * 設定 AI 設定
    */
-  static async setAISettings(settings: { systemPrompt?: string; model?: string }): Promise<void> {
+  static async setAISettings(settings: { systemPrompt?: string; model?: string; provider?: 'ollama' | 'openai' }): Promise<void> {
     try {
       const db = getDb();
       const settingsRef = db.collection('settings').doc('global');
@@ -594,6 +601,9 @@ export class StatsService {
       }
       if (settings.model !== undefined) {
         updates.aiModel = settings.model;
+      }
+      if (settings.provider !== undefined) {
+        updates.aiProvider = settings.provider;
       }
 
       await settingsRef.set(updates, { merge: true });

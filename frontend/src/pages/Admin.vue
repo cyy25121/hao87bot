@@ -59,6 +59,22 @@
           <h2>AI 設定</h2>
           <div class="settings-form">
             <div class="form-group">
+              <label for="aiProvider">AI Provider</label>
+              <select
+                id="aiProvider"
+                v-model="aiProvider"
+                class="nes-input"
+                :disabled="isSavingAISettings"
+                style="width: 100%"
+              >
+                <option value="ollama">Ollama</option>
+                <option value="openai">OpenAI</option>
+              </select>
+              <p style="font-size: 10px; color: #ccc; margin-top: 5px">
+                選擇 AI 服務提供商
+              </p>
+            </div>
+            <div class="form-group">
               <label for="aiModel">模型選擇</label>
               <div style="display: flex; gap: 10px; align-items: center">
                 <select
@@ -68,14 +84,24 @@
                   :disabled="isSavingAISettings"
                   style="flex: 1"
                 >
-                  <option value="qwen3:8b">qwen3:8b (預設)</option>
-                  <option value="qwen3:4b">qwen3:4b</option>
-                  <option value="llama3.2:3b">llama3.2:3b</option>
-                  <option value="gemma3:4b">gemma3:4b</option>
-                  <option value="custom">自訂模型</option>
+                  <!-- Ollama 模型選項 -->
+                  <template v-if="aiProvider === 'ollama'">
+                    <option value="qwen3:8b">qwen3:8b (預設)</option>
+                    <option value="qwen3:4b">qwen3:4b</option>
+                    <option value="llama3.2:3b">llama3.2:3b</option>
+                    <option value="gemma3:4b">gemma3:4b</option>
+                    <option value="custom">自訂模型</option>
+                  </template>
+                  <!-- OpenAI 模型選項 -->
+                  <template v-else>
+                    <option value="gpt-4o">gpt-4o</option>
+                    <option value="gpt-4o-mini">gpt-4o-mini (預設)</option>
+                    <option value="gpt-4-turbo">gpt-4-turbo</option>
+                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                  </template>
                 </select>
                 <input
-                  v-if="aiModel === 'custom'"
+                  v-if="aiProvider === 'ollama' && aiModel === 'custom'"
                   v-model="customModel"
                   type="text"
                   class="nes-input"
@@ -85,7 +111,12 @@
                 />
               </div>
               <p style="font-size: 10px; color: #ccc; margin-top: 5px">
-                選擇 AI 模型，或選擇「自訂模型」輸入其他模型名稱
+                <template v-if="aiProvider === 'ollama'">
+                  選擇 AI 模型，或選擇「自訂模型」輸入其他模型名稱
+                </template>
+                <template v-else>
+                  選擇 OpenAI 模型
+                </template>
               </p>
             </div>
             <div class="form-group">
@@ -227,6 +258,7 @@ const isSavingSettings = ref(false);
 const isDeleting = ref<number | null>(null);
 
 // AI 設定狀態
+const aiProvider = ref<'ollama' | 'openai'>('ollama');
 const aiSystemPrompt = ref<string>('');
 const aiModel = ref<string>('qwen3:8b');
 const customModel = ref<string>('');
@@ -272,18 +304,34 @@ const loadSettings = () => {
         threshold.value = data?.threshold || 100;
         
         // 載入 AI 設定
+        const provider = (data?.aiProvider || 'ollama') as 'ollama' | 'openai';
+        aiProvider.value = provider;
         aiSystemPrompt.value = data?.aiSystemPrompt || '';
-        const model = data?.aiModel || 'qwen3:8b';
-        if (['qwen3:8b', 'qwen3:4b', 'llama3.2:3b', 'gemma3:4b'].includes(model)) {
-          aiModel.value = model;
-          customModel.value = '';
+        const model = data?.aiModel || (provider === 'openai' ? 'gpt-4o-mini' : 'qwen3:8b');
+        
+        if (provider === 'ollama') {
+          if (['qwen3:8b', 'qwen3:4b', 'llama3.2:3b', 'gemma3:4b'].includes(model)) {
+            aiModel.value = model;
+            customModel.value = '';
+          } else {
+            aiModel.value = 'custom';
+            customModel.value = model;
+          }
         } else {
-          aiModel.value = 'custom';
-          customModel.value = model;
+          // OpenAI 模型
+          const openaiModels = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
+          if (openaiModels.includes(model)) {
+            aiModel.value = model;
+          } else {
+            // 如果不在預設列表中，使用 gpt-4o-mini 作為預設
+            aiModel.value = 'gpt-4o-mini';
+          }
+          customModel.value = '';
         }
       } else {
         // 如果不存在，建立預設設定
         threshold.value = 100;
+        aiProvider.value = 'ollama';
         aiSystemPrompt.value = '';
         aiModel.value = 'qwen3:8b';
         customModel.value = '';
@@ -337,14 +385,21 @@ const saveAISettings = async () => {
     const settingsDoc = await getDoc(settingsRef);
 
     // 決定使用的模型名稱
-    const modelToSave = aiModel.value === 'custom' ? customModel.value.trim() : aiModel.value;
+    let modelToSave: string;
+    if (aiProvider.value === 'ollama') {
+      modelToSave = aiModel.value === 'custom' ? customModel.value.trim() : aiModel.value;
+    } else {
+      modelToSave = aiModel.value;
+    }
     
     if (!modelToSave) {
       error.value = '請輸入模型名稱';
       return;
     }
 
-    const updates: any = {};
+    const updates: any = {
+      aiProvider: aiProvider.value,
+    };
     if (aiSystemPrompt.value.trim()) {
       updates.aiSystemPrompt = aiSystemPrompt.value.trim();
     } else {

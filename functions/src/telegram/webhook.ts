@@ -1,6 +1,6 @@
 import { TelegramUpdate, TelegramMessage } from '../types';
 import { StatsService } from '../services/statsService';
-import { callOllama, checkOllamaHealth } from '../services/ollamaService';
+import { callAI, checkAIHealth } from '../services/aiService';
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -390,21 +390,23 @@ async function performHealthCheck(): Promise<string> {
     allHealthy = false;
   }
 
-  // 檢查 Ollama 服務
+  // 檢查 AI 服務（根據設定的 provider）
   try {
-    const ollamaHealth = await checkOllamaHealth();
-    if (ollamaHealth.healthy) {
-      let ollamaMessage = `✅ Ollama 服務: ${ollamaHealth.message}`;
-      if (ollamaHealth.models && ollamaHealth.models.length > 0) {
-        ollamaMessage += `\n   可用模型: ${ollamaHealth.models.slice(0, 5).join(', ')}${ollamaHealth.models.length > 5 ? ` (共 ${ollamaHealth.models.length} 個)` : ''}`;
+    const aiHealth = await checkAIHealth();
+    if (aiHealth.healthy) {
+      let aiMessage = `✅ ${aiHealth.provider === 'openai' ? 'OpenAI' : 'Ollama'} 服務: ${aiHealth.message}`;
+      if (aiHealth.provider === 'ollama' && aiHealth.models && aiHealth.models.length > 0) {
+        aiMessage += `\n   可用模型: ${aiHealth.models.slice(0, 5).join(', ')}${aiHealth.models.length > 5 ? ` (共 ${aiHealth.models.length} 個)` : ''}`;
+      } else if (aiHealth.provider === 'openai' && aiHealth.model) {
+        aiMessage += `\n   目前模型: ${aiHealth.model}`;
       }
-      checks.push(ollamaMessage);
+      checks.push(aiMessage);
     } else {
-      checks.push(`❌ Ollama 服務: ${ollamaHealth.message}`);
+      checks.push(`❌ ${aiHealth.provider === 'openai' ? 'OpenAI' : 'Ollama'} 服務: ${aiHealth.message}`);
       allHealthy = false;
     }
   } catch (error) {
-    checks.push(`❌ Ollama 服務: 健康檢查失敗 (${error instanceof Error ? error.message : 'Unknown error'})`);
+    checks.push(`❌ AI 服務: 健康檢查失敗 (${error instanceof Error ? error.message : 'Unknown error'})`);
     allHealthy = false;
   }
 
@@ -596,15 +598,15 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
         return;
       }
 
-      // 新版：使用 Ollama AI 回應
+      // 新版：使用 AI 回應（根據設定的 provider）
       try {
         const userMessage = message.text || message.caption || '';
-        const aiResponse = await callOllama(userMessage);
+        const aiResponse = await callAI(userMessage);
         // 回覆到原始訊息，讓使用者知道機器人在回應哪個訊息
         await sendMessage(chatId, aiResponse, message.message_id);
       } catch (error) {
-        console.error('[handleMessage] Ollama 錯誤:', error);
-        // 如果 Ollama 服務失敗，回覆錯誤訊息（也回覆到原始訊息）
+        console.error('[handleMessage] AI 錯誤:', error);
+        // 如果 AI 服務失敗，回覆錯誤訊息（也回覆到原始訊息）
         const errorMessage = error instanceof Error 
           ? `🤖 抱歉，我現在無法回應。錯誤：${error.message}`
           : '🤖 抱歉，我現在無法回應，請稍後再試。';
