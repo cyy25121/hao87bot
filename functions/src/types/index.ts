@@ -5,6 +5,7 @@ export interface GroupStats {
   linkCount: number;
   photoCount: number;
   stickerCount: number;
+  botMentionCount: number;
   lastImageAt: number;
   threshold: number;
   createdAt: FirebaseFirestore.Timestamp;

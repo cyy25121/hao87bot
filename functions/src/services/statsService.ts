@@ -29,6 +29,7 @@ export class StatsService {
         linkCount: 0,
         photoCount: 0,
         stickerCount: 0,
+        botMentionCount: 0,
         lastImageAt: 0,
         threshold: 100, // 保留欄位以向後兼容，實際使用全域閾值
         createdAt: admin.firestore.Timestamp.now(),
@@ -123,6 +124,25 @@ export class StatsService {
       }
     } catch (error) {
       console.error(`[StatsService] Error in incrementStickerCount:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 更新群組機器人被呼叫計數（指令或 tag）
+   */
+  static async incrementBotMentionCount(groupId: number): Promise<void> {
+    try {
+      const db = getDb();
+      const groupRef = db.collection('groups').doc(groupId.toString());
+      const groupDoc = await groupRef.get();
+
+      if (groupDoc.exists) {
+        const currentCount = groupDoc.data()?.botMentionCount || 0;
+        await groupRef.update({ botMentionCount: currentCount + 1 });
+      }
+    } catch (error) {
+      console.error(`[StatsService] Error in incrementBotMentionCount:`, error);
       throw error;
     }
   }
@@ -269,11 +289,12 @@ export class StatsService {
     const data = groupDoc.data() as GroupStats;
     
     // 確保新欄位存在（處理舊資料的相容性）
-    if (data.linkCount === undefined || data.photoCount === undefined || data.stickerCount === undefined) {
+    if (data.linkCount === undefined || data.photoCount === undefined || data.stickerCount === undefined || data.botMentionCount === undefined) {
       const updates: any = {};
       if (data.linkCount === undefined) updates.linkCount = 0;
       if (data.photoCount === undefined) updates.photoCount = 0;
       if (data.stickerCount === undefined) updates.stickerCount = 0;
+      if (data.botMentionCount === undefined) updates.botMentionCount = 0;
       
       // 更新資料庫
       await groupRef.update(updates);
@@ -284,6 +305,7 @@ export class StatsService {
         linkCount: data.linkCount ?? 0,
         photoCount: data.photoCount ?? 0,
         stickerCount: data.stickerCount ?? 0,
+        botMentionCount: data.botMentionCount ?? 0,
       };
     }
     

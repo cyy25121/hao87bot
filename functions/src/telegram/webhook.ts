@@ -518,7 +518,8 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       message += `📝 訊息數：${group.messageCount}\n`;
       message += `🔗 連結數：${group.linkCount || 0}\n`;
       message += `📷 圖片數：${group.photoCount || 0}\n`;
-      message += `😊 貼圖數：${group.stickerCount || 0}\n\n`;
+      message += `😊 貼圖數：${group.stickerCount || 0}\n`;
+      message += `🤖 機器人被呼叫：${group.botMentionCount || 0} 次\n\n`;
       
       if (topMembers.length > 0) {
         message += `<b>🏆 活躍成員 Top 5：</b>\n`;
@@ -557,6 +558,9 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     const isActivated = group.messageCount >= globalThreshold;
     
     if (isBotMentioned(message, botUsername)) {
+      // 記錄機器人被呼叫的次數
+      await StatsService.incrementBotMentionCount(groupId);
+      
       // 舊版回應邏輯（暫時停用）
       if (ENABLE_LEGACY_MENTION_RESPONSE) {
         await handleLegacyMentionResponse(chatId, groupId, isActivated);

@@ -54,6 +54,12 @@
               </div>
               <div class="stat-label">貼圖次數</div>
             </div>
+            <div class="stat-item">
+              <div class="stat-value" style="color: #f39c12">
+                {{ data.group.botMentionCount || 0 }}
+              </div>
+              <div class="stat-label">機器人被呼叫</div>
+            </div>
           </div>
         </div>
       </transition>
@@ -122,6 +128,7 @@ interface GroupStats {
   linkCount?: number;
   photoCount?: number;
   stickerCount?: number;
+  botMentionCount?: number;
   lastImageAt: number;
   threshold: number;
   createdAt: {
@@ -228,6 +235,7 @@ const setupRealtimeListeners = () => {
         linkCount: 0,
         photoCount: 0,
         stickerCount: 0,
+        botMentionCount: 0,
         lastImageAt: 0,
         threshold: 100,
         createdAt: { seconds: 0, nanoseconds: 0 },
@@ -253,6 +261,7 @@ const setupRealtimeListeners = () => {
             linkCount: groupData.linkCount ?? 0,
             photoCount: groupData.photoCount ?? 0,
             stickerCount: groupData.stickerCount ?? 0,
+            botMentionCount: groupData.botMentionCount ?? 0,
           };
         }
         checkAllLoaded();
@@ -377,14 +386,15 @@ onUnmounted(() => {
 <style scoped>
 .stats-grid {
   display: flex;
-  gap: 30px;
+  gap: 15px;
   flex-wrap: wrap;
   justify-content: center;
 }
 
 .stat-item {
   text-align: center;
-  min-width: 120px;
+  min-width: 100px;
+  flex: 1 1 auto;
 }
 
 .stat-value {
