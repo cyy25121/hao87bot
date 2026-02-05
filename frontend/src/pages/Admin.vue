@@ -53,6 +53,68 @@
         </div>
       </transition>
 
+      <!-- AI 設定管理 -->
+      <transition name="fade" appear style="transition-delay: 0.05s">
+        <div class="admin-card rpg-box">
+          <h2>AI 設定</h2>
+          <div class="settings-form">
+            <div class="form-group">
+              <label for="aiModel">模型選擇</label>
+              <div style="display: flex; gap: 10px; align-items: center">
+                <select
+                  id="aiModel"
+                  v-model="aiModel"
+                  class="nes-input"
+                  :disabled="isSavingAISettings"
+                  style="flex: 1"
+                >
+                  <option value="qwen3:8b">qwen3:8b (預設)</option>
+                  <option value="qwen3:4b">qwen3:4b</option>
+                  <option value="llama3.2:3b">llama3.2:3b</option>
+                  <option value="gemma3:4b">gemma3:4b</option>
+                  <option value="custom">自訂模型</option>
+                </select>
+                <input
+                  v-if="aiModel === 'custom'"
+                  v-model="customModel"
+                  type="text"
+                  class="nes-input"
+                  placeholder="輸入模型名稱"
+                  :disabled="isSavingAISettings"
+                  style="flex: 1"
+                />
+              </div>
+              <p style="font-size: 10px; color: #ccc; margin-top: 5px">
+                選擇 AI 模型，或選擇「自訂模型」輸入其他模型名稱
+              </p>
+            </div>
+            <div class="form-group">
+              <label for="aiSystemPrompt">系統提示詞</label>
+              <textarea
+                id="aiSystemPrompt"
+                v-model="aiSystemPrompt"
+                class="nes-input"
+                rows="10"
+                :disabled="isSavingAISettings"
+                placeholder="輸入系統提示詞..."
+                style="width: 100%; font-family: 'Fusion Pixel', 'Press Start 2P', 'Courier New', monospace; font-size: 12px; resize: vertical"
+              ></textarea>
+              <p style="font-size: 10px; color: #ccc; margin-top: 5px">
+                設定 AI 的個性和回應風格。留空則使用預設提示詞。
+              </p>
+            </div>
+            <button
+              @click="saveAISettings"
+              class="nes-btn is-primary pixel-button"
+              :disabled="isSavingAISettings"
+              style="width: 100%; margin-top: 10px"
+            >
+              {{ isSavingAISettings ? '儲存中...' : '儲存 AI 設定' }}
+            </button>
+          </div>
+        </div>
+      </transition>
+
       <!-- 群組統計總覽 -->
       <transition name="fade" appear style="transition-delay: 0.1s">
         <div class="admin-card rpg-box">
@@ -164,6 +226,12 @@ const threshold = ref<number>(100);
 const isSavingSettings = ref(false);
 const isDeleting = ref<number | null>(null);
 
+// AI 設定狀態
+const aiSystemPrompt = ref<string>('');
+const aiModel = ref<string>('qwen3:8b');
+const customModel = ref<string>('');
+const isSavingAISettings = ref(false);
+
 // 監聽器
 let unsubscribeGroups: (() => void) | null = null;
 let unsubscribeSettings: (() => void) | null = null;
@@ -202,9 +270,23 @@ const loadSettings = () => {
       if (snapshot.exists()) {
         const data = snapshot.data();
         threshold.value = data?.threshold || 100;
+        
+        // 載入 AI 設定
+        aiSystemPrompt.value = data?.aiSystemPrompt || '';
+        const model = data?.aiModel || 'qwen3:8b';
+        if (['qwen3:8b', 'qwen3:4b', 'llama3.2:3b', 'gemma3:4b'].includes(model)) {
+          aiModel.value = model;
+          customModel.value = '';
+        } else {
+          aiModel.value = 'custom';
+          customModel.value = model;
+        }
       } else {
         // 如果不存在，建立預設設定
         threshold.value = 100;
+        aiSystemPrompt.value = '';
+        aiModel.value = 'qwen3:8b';
+        customModel.value = '';
       }
     },
     (err) => {
@@ -242,6 +324,47 @@ const saveSettings = async () => {
     error.value = '儲存設定失敗：' + (err.message || '未知錯誤');
   } finally {
     isSavingSettings.value = false;
+  }
+};
+
+// 儲存 AI 設定
+const saveAISettings = async () => {
+  try {
+    isSavingAISettings.value = true;
+    error.value = null;
+
+    const settingsRef = doc(db, 'settings', 'global');
+    const settingsDoc = await getDoc(settingsRef);
+
+    // 決定使用的模型名稱
+    const modelToSave = aiModel.value === 'custom' ? customModel.value.trim() : aiModel.value;
+    
+    if (!modelToSave) {
+      error.value = '請輸入模型名稱';
+      return;
+    }
+
+    const updates: any = {};
+    if (aiSystemPrompt.value.trim()) {
+      updates.aiSystemPrompt = aiSystemPrompt.value.trim();
+    } else {
+      // 如果為空，設定為空字串（使用預設值）
+      updates.aiSystemPrompt = '';
+    }
+    updates.aiModel = modelToSave;
+
+    if (settingsDoc.exists()) {
+      await updateDoc(settingsRef, updates);
+    } else {
+      await setDoc(settingsRef, updates);
+    }
+
+    console.log('[Admin] AI settings saved successfully');
+  } catch (err: any) {
+    console.error('[Admin] Error saving AI settings:', err);
+    error.value = '儲存 AI 設定失敗：' + (err.message || '未知錯誤');
+  } finally {
+    isSavingAISettings.value = false;
   }
 };
 
@@ -478,5 +601,49 @@ onUnmounted(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* AI 設定表單樣式 */
+.nes-input select {
+  background: #212529;
+  color: #fff;
+  border: 4px solid #fff;
+  padding: 12px;
+  font-family: 'Fusion Pixel', 'Press Start 2P', 'Courier New', monospace;
+  font-size: 12px;
+  image-rendering: pixelated;
+  cursor: pointer;
+}
+
+.nes-input select:focus {
+  outline: none;
+  border-color: #f39c12;
+}
+
+.nes-input select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.nes-input textarea {
+  background: #212529;
+  color: #fff;
+  border: 4px solid #fff;
+  padding: 12px;
+  font-family: 'Fusion Pixel', 'Press Start 2P', 'Courier New', monospace;
+  font-size: 12px;
+  image-rendering: pixelated;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.nes-input textarea:focus {
+  outline: none;
+  border-color: #f39c12;
+}
+
+.nes-input textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

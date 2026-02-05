@@ -547,4 +547,59 @@ export class StatsService {
       return null;
     }
   }
+
+  /**
+   * 取得 AI 設定
+   */
+  static async getAISettings(): Promise<{ systemPrompt: string; model: string }> {
+    try {
+      const db = getDb();
+      const settingsRef = db.collection('settings').doc('global');
+      const settingsDoc = await settingsRef.get();
+
+      if (settingsDoc.exists) {
+        const data = settingsDoc.data();
+        return {
+          systemPrompt: data?.aiSystemPrompt || '',
+          model: data?.aiModel || 'qwen3:8b',
+        };
+      }
+
+      // 如果不存在，返回預設值
+      return {
+        systemPrompt: '',
+        model: 'qwen3:8b',
+      };
+    } catch (error) {
+      console.error(`[StatsService] Error in getAISettings:`, error);
+      // 發生錯誤時返回預設值
+      return {
+        systemPrompt: '',
+        model: 'qwen3:8b',
+      };
+    }
+  }
+
+  /**
+   * 設定 AI 設定
+   */
+  static async setAISettings(settings: { systemPrompt?: string; model?: string }): Promise<void> {
+    try {
+      const db = getDb();
+      const settingsRef = db.collection('settings').doc('global');
+      
+      const updates: any = {};
+      if (settings.systemPrompt !== undefined) {
+        updates.aiSystemPrompt = settings.systemPrompt;
+      }
+      if (settings.model !== undefined) {
+        updates.aiModel = settings.model;
+      }
+
+      await settingsRef.set(updates, { merge: true });
+    } catch (error) {
+      console.error(`[StatsService] Error in setAISettings:`, error);
+      throw error;
+    }
+  }
 }

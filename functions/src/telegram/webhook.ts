@@ -1,6 +1,6 @@
 import { TelegramUpdate, TelegramMessage } from '../types';
 import { StatsService } from '../services/statsService';
-import { callOllama } from '../services/ollamaService';
+import { callOllama, checkOllamaHealth } from '../services/ollamaService';
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -376,6 +376,24 @@ async function performHealthCheck(): Promise<string> {
     }
   } catch (error) {
     checks.push(`❌ Firebase Storage: 連線失敗 (${error instanceof Error ? error.message : 'Unknown error'})`);
+    allHealthy = false;
+  }
+
+  // 檢查 Ollama 服務
+  try {
+    const ollamaHealth = await checkOllamaHealth();
+    if (ollamaHealth.healthy) {
+      let ollamaMessage = `✅ Ollama 服務: ${ollamaHealth.message}`;
+      if (ollamaHealth.models && ollamaHealth.models.length > 0) {
+        ollamaMessage += `\n   可用模型: ${ollamaHealth.models.slice(0, 5).join(', ')}${ollamaHealth.models.length > 5 ? ` (共 ${ollamaHealth.models.length} 個)` : ''}`;
+      }
+      checks.push(ollamaMessage);
+    } else {
+      checks.push(`❌ Ollama 服務: ${ollamaHealth.message}`);
+      allHealthy = false;
+    }
+  } catch (error) {
+    checks.push(`❌ Ollama 服務: 健康檢查失敗 (${error instanceof Error ? error.message : 'Unknown error'})`);
     allHealthy = false;
   }
 

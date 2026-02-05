@@ -1,12 +1,14 @@
 /**
  * Ollama 服務模組
- * 透過 ngrok 連接到本地 Ollama 服務，使用 qwen3:8b 模型生成回應
+ * 透過 ngrok 連接到本地 Ollama 服務，使用可設定的模型生成回應
  */
 
+import { StatsService } from './statsService';
+
 /**
- * 系統提示詞
+ * 預設系統提示詞
  */
-const SYSTEM_PROMPT = `你是「hao87bot」，一個 Telegram 群組的 AI 機器人助手。你的個性幽默、機智，喜歡用半開玩笑的方式回應，但也能在需要時提供有用的資訊。
+const DEFAULT_SYSTEM_PROMPT = `你是「hao87bot」，一個 Telegram 群組的 AI 機器人助手。你的個性幽默、機智，喜歡用半開玩笑的方式回應，但也能在需要時提供有用的資訊。
 
 特點：
 - 使用繁體中文回應
@@ -21,22 +23,51 @@ const SYSTEM_PROMPT = `你是「hao87bot」，一個 Telegram 群組的 AI 機�
 以下是來自群組的訊息，請以「hao87bot」的身份回應：`;
 
 /**
+ * 取得系統提示詞（從 Firestore 或使用預設值）
+ */
+async function getSystemPrompt(): Promise<string> {
+  try {
+    const settings = await StatsService.getAISettings();
+    // 如果 Firestore 中有設定，使用設定的值；否則使用預設值
+    return settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  } catch (error) {
+    console.error('[getSystemPrompt] Error getting AI settings:', error);
+    // 發生錯誤時使用預設值
+    return DEFAULT_SYSTEM_PROMPT;
+  }
+}
+
+/**
+ * 取得模型名稱（從 Firestore 或使用預設值）
+ */
+async function getModel(): Promise<string> {
+  try {
+    const settings = await StatsService.getAISettings();
+    return settings.model || 'qwen3:8b';
+  } catch (error) {
+    console.error('[getModel] Error getting AI settings:', error);
+    return 'qwen3:8b';
+  }
+}
+
+/**
  * 建立完整的提示詞
  */
-function buildPrompt(userMessage: string): string {
+async function buildPrompt(userMessage: string): Promise<string> {
   // 移除 bot mention（@botname）和指令符號
   let cleanedMessage = userMessage
     .replace(/@\w+/g, '') // 移除所有 @mention
     .replace(/^\//, '') // 移除開頭的 /
     .trim();
 
-  return `${SYSTEM_PROMPT}\n\n${cleanedMessage}`;
+  const systemPrompt = await getSystemPrompt();
+  return `${systemPrompt}\n\n${cleanedMessage}`;
 }
 
 /**
- * 呼叫 Ollama API 生成回應
+ * 取得 Ollama 基礎 URL
  */
-export async function callOllama(userMessage: string): Promise<string> {
+function getOllamaBaseUrl(): string {
   const ngrokUrl = process.env.NGROK_OLLAMA_URL;
   
   if (!ngrokUrl) {
@@ -44,10 +75,18 @@ export async function callOllama(userMessage: string): Promise<string> {
   }
 
   // 移除 ngrok URL 結尾的斜線
-  const baseUrl = ngrokUrl.replace(/\/$/, '');
+  return ngrokUrl.replace(/\/$/, '');
+}
+
+/**
+ * 呼叫 Ollama API 生成回應
+ */
+export async function callOllama(userMessage: string): Promise<string> {
+  const baseUrl = getOllamaBaseUrl();
   const apiUrl = `${baseUrl}/api/generate`;
 
-  const prompt = buildPrompt(userMessage);
+  const prompt = await buildPrompt(userMessage);
+  const model = await getModel();
 
   try {
     // 先嘗試訪問根路徑來觸發 ngrok cookie（如果需要的話）
@@ -75,7 +114,7 @@ export async function callOllama(userMessage: string): Promise<string> {
         'User-Agent': 'Mozilla/5.0 (compatible; CloudFunction/1.0)',
       },
       body: JSON.stringify({
-        model: 'qwen3:8b',
+        model: model,
         prompt: prompt,
         stream: false,
         options: {
@@ -152,5 +191,74 @@ export async function callOllama(userMessage: string): Promise<string> {
     }
     
     throw new Error('未知錯誤：無法取得 Ollama 回應');
+  }
+}
+
+/**
+ * 檢查 Ollama 服務健康狀態
+ */
+export async function checkOllamaHealth(): Promise<{
+  healthy: boolean;
+  message: string;
+  models?: string[];
+}> {
+  try {
+    const baseUrl = getOllamaBaseUrl();
+    const tagsUrl = `${baseUrl}/api/tags`;
+
+    // 嘗試連線到 Ollama API 的 /api/tags 端點
+    const response = await fetch(tagsUrl, {
+      method: 'GET',
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+        'User-Agent': 'Mozilla/5.0 (compatible; CloudFunction/1.0)',
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        healthy: false,
+        message: `Ollama API 連線失敗: ${response.status} ${response.statusText}`,
+      };
+    }
+
+    const data = await response.json();
+    const models = data.models?.map((m: any) => m.name) || [];
+
+    return {
+      healthy: true,
+      message: `Ollama 服務正常運作`,
+      models: models,
+    };
+  } catch (error) {
+    console.error('[checkOllamaHealth] Error:', error);
+    
+    if (error instanceof Error) {
+      // 檢查是否為環境變數未設定
+      if (error.message.includes('NGROK_OLLAMA_URL')) {
+        return {
+          healthy: false,
+          message: 'NGROK_OLLAMA_URL 環境變數未設定',
+        };
+      }
+      
+      // 檢查是否為連線錯誤
+      if (error.message.includes('fetch') || error.message.includes('ECONNREFUSED')) {
+        return {
+          healthy: false,
+          message: '無法連接到 Ollama 服務，請確認 ngrok 是否正常運作',
+        };
+      }
+      
+      return {
+        healthy: false,
+        message: `Ollama 健康檢查失敗: ${error.message}`,
+      };
+    }
+    
+    return {
+      healthy: false,
+      message: 'Ollama 健康檢查失敗: 未知錯誤',
+    };
   }
 }
