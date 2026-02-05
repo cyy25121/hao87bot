@@ -18,19 +18,30 @@ function getEnvVar(name: string): string {
   return value;
 }
 
-async function sendMessage(chatId: number, text: string): Promise<void> {
+async function sendMessage(
+  chatId: number,
+  text: string,
+  replyToMessageId?: number
+): Promise<void> {
   const botToken = getEnvVar('TELEGRAM_BOT_TOKEN');
+
+  const body: any = {
+    chat_id: chatId,
+    text: text,
+    parse_mode: 'HTML',
+  };
+
+  // 如果有指定回覆的訊息 ID，加入回覆參數
+  if (replyToMessageId !== undefined) {
+    body.reply_to_message_id = replyToMessageId;
+  }
 
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: text,
-      parse_mode: 'HTML',
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -589,14 +600,15 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       try {
         const userMessage = message.text || message.caption || '';
         const aiResponse = await callOllama(userMessage);
-        await sendMessage(chatId, aiResponse);
+        // 回覆到原始訊息，讓使用者知道機器人在回應哪個訊息
+        await sendMessage(chatId, aiResponse, message.message_id);
       } catch (error) {
         console.error('[handleMessage] Ollama 錯誤:', error);
-        // 如果 Ollama 服務失敗，回覆錯誤訊息
+        // 如果 Ollama 服務失敗，回覆錯誤訊息（也回覆到原始訊息）
         const errorMessage = error instanceof Error 
           ? `🤖 抱歉，我現在無法回應。錯誤：${error.message}`
           : '🤖 抱歉，我現在無法回應，請稍後再試。';
-        await sendMessage(chatId, errorMessage);
+        await sendMessage(chatId, errorMessage, message.message_id);
       }
       return; // 不處理其他邏輯
     }
