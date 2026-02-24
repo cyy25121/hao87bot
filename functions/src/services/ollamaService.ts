@@ -23,17 +23,27 @@ const DEFAULT_SYSTEM_PROMPT = `你是「hao87bot」，一個 Telegram 群組的 
 以下是來自群組的訊息，請以「hao87bot」的身份回應：`;
 
 /**
+ * 回應格式後綴：指示 AI 使用 Markdown 格式回應
+ */
+const RESPONSE_FORMAT_SUFFIX = `
+
+回應格式要求：
+- 使用標準 Markdown 格式（粗體用 **文字**、斜體用 *文字*、程式碼用 \`code\` 或 \`\`\`code block\`\`\`）
+- 回應控制在 2000 字以內`;
+
+/**
  * 取得系統提示詞（從 Firestore 或使用預設值）
  */
 async function getSystemPrompt(): Promise<string> {
   try {
     const settings = await StatsService.getAISettings();
     // 如果 Firestore 中有設定，使用設定的值；否則使用預設值
-    return settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const basePrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    return basePrompt + RESPONSE_FORMAT_SUFFIX;
   } catch (error) {
     console.error('[getSystemPrompt] Error getting AI settings:', error);
     // 發生錯誤時使用預設值
-    return DEFAULT_SYSTEM_PROMPT;
+    return DEFAULT_SYSTEM_PROMPT + RESPONSE_FORMAT_SUFFIX;
   }
 }
 
@@ -53,7 +63,7 @@ async function getModel(): Promise<string> {
 /**
  * 建立完整的提示詞
  */
-async function buildPrompt(userMessage: string): Promise<string> {
+async function buildPrompt(userMessage: string, conversationContext?: string): Promise<string> {
   // 移除 bot mention（@botname）和指令符號
   let cleanedMessage = userMessage
     .replace(/@\w+/g, '') // 移除所有 @mention
@@ -61,6 +71,11 @@ async function buildPrompt(userMessage: string): Promise<string> {
     .trim();
 
   const systemPrompt = await getSystemPrompt();
+
+  if (conversationContext) {
+    return `${systemPrompt}\n\n${conversationContext}\n\n${cleanedMessage}`;
+  }
+
   return `${systemPrompt}\n\n${cleanedMessage}`;
 }
 
@@ -81,12 +96,14 @@ function getOllamaBaseUrl(): string {
 /**
  * 呼叫 Ollama API 生成回應
  */
-export async function callOllama(userMessage: string): Promise<string> {
+export async function callOllama(userMessage: string, conversationContext?: string): Promise<string> {
   const baseUrl = getOllamaBaseUrl();
   const apiUrl = `${baseUrl}/api/generate`;
 
-  const prompt = await buildPrompt(userMessage);
+  const prompt = await buildPrompt(userMessage, conversationContext);
   const model = await getModel();
+
+  console.warn(`[callOllama] 開始呼叫 model=${model}, promptLength=${prompt.length}, hasContext=${!!conversationContext}`);
 
   try {
     // 先嘗試訪問根路徑來觸發 ngrok cookie（如果需要的話）
@@ -170,8 +187,11 @@ export async function callOllama(userMessage: string): Promise<string> {
       throw new Error('Ollama API 回應格式錯誤：缺少 response 欄位');
     }
 
-    // 清理回應內容（移除多餘的空白和換行）
-    let cleanedResponse = data.response.trim();
+    // 清理回應內容
+    let cleanedResponse = data.response
+      // 移除 qwen3 等模型的 <think>...</think> 思考標籤
+      .replace(/<think>[\s\S]*?<\/think>/g, '')
+      .trim();
     
     // 如果回應太長，截斷到合理長度（Telegram 訊息限制約 4096 字元）
     if (cleanedResponse.length > 4000) {

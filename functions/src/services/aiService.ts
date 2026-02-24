@@ -23,14 +23,19 @@ async function getAIProvider(): Promise<'ollama' | 'openai'> {
 /**
  * 統一的 AI 呼叫介面
  */
-export async function callAI(userMessage: string): Promise<string> {
+export async function callAI(userMessage: string, conversationContext?: string): Promise<string> {
   const provider = await getAIProvider();
+  console.warn(`[callAI] provider=${provider}, messageLength=${userMessage.length}, hasContext=${!!conversationContext}`);
 
+  let result: string;
   if (provider === 'openai') {
-    return await callOpenAI(userMessage);
+    result = await callOpenAI(userMessage, conversationContext);
   } else {
-    return await callOllama(userMessage);
+    result = await callOllama(userMessage, conversationContext);
   }
+
+  console.warn(`[callAI] 回應長度=${result?.length}, 是否為空=${!result || result.trim().length === 0}, 前100字=${(result || '').substring(0, 100)}`);
+  return result;
 }
 
 /**

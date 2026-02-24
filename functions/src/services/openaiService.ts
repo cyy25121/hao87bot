@@ -23,17 +23,27 @@ const DEFAULT_SYSTEM_PROMPT = `你是「hao87bot」，一個 Telegram 群組的 
 以下是來自群組的訊息，請以「hao87bot」的身份回應：`;
 
 /**
+ * 回應格式後綴：指示 AI 使用 Markdown 格式回應
+ */
+const RESPONSE_FORMAT_SUFFIX = `
+
+回應格式要求：
+- 使用標準 Markdown 格式（粗體用 **文字**、斜體用 *文字*、程式碼用 \`code\` 或 \`\`\`code block\`\`\`）
+- 回應控制在 2000 字以內`;
+
+/**
  * 取得系統提示詞（從 Firestore 或使用預設值）
  */
 async function getSystemPrompt(): Promise<string> {
   try {
     const settings = await StatsService.getAISettings();
     // 如果 Firestore 中有設定，使用設定的值；否則使用預設值
-    return settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const basePrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    return basePrompt + RESPONSE_FORMAT_SUFFIX;
   } catch (error) {
     console.error('[getSystemPrompt] Error getting AI settings:', error);
     // 發生錯誤時使用預設值
-    return DEFAULT_SYSTEM_PROMPT;
+    return DEFAULT_SYSTEM_PROMPT + RESPONSE_FORMAT_SUFFIX;
   }
 }
 
@@ -48,6 +58,14 @@ async function getModel(): Promise<string> {
     console.error('[getModel] Error getting AI settings:', error);
     return 'gpt-4o-mini';
   }
+}
+
+/**
+ * 判斷是否為推理模型（o 系列、gpt-5 系列），這些模型使用 reasoning tokens，
+ * 不支援 temperature、top_p 等取樣參數，且需使用 developer role 取代 system role
+ */
+function isReasoningModel(model: string): boolean {
+  return /^(o1|o3|o4|gpt-5)/.test(model);
 }
 
 /**
@@ -77,7 +95,7 @@ function getOpenAIApiKey(): string {
 /**
  * 呼叫 OpenAI API 生成回應
  */
-export async function callOpenAI(userMessage: string): Promise<string> {
+export async function callOpenAI(userMessage: string, conversationContext?: string): Promise<string> {
   const apiKey = getOpenAIApiKey();
   const apiUrl = 'https://api.openai.com/v1/chat/completions';
 
@@ -85,22 +103,40 @@ export async function callOpenAI(userMessage: string): Promise<string> {
   const model = await getModel();
   const cleanedMessage = cleanUserMessage(userMessage);
 
+  console.warn(`[callOpenAI] 開始呼叫 model=${model}, cleanedMessage="${cleanedMessage.substring(0, 80)}", hasContext=${!!conversationContext}`);
+
+  // 如果有上下文，將其附加到系統提示詞
+  const fullSystemPrompt = conversationContext
+    ? `${systemPrompt}\n\n${conversationContext}`
+    : systemPrompt;
+
   try {
+    const reasoning = isReasoningModel(model);
+
+    // 推理模型使用 developer role，一般模型使用 system role
+    const systemRole = reasoning ? 'developer' : 'system';
+
+    // 推理模型的 max_completion_tokens 包含思考 token + 回應 token，需要更大的值
+    const maxTokens = reasoning ? 4096 : 500;
+
+    const requestBody: Record<string, unknown> = {
+      model: model,
+      messages: [
+        { role: systemRole, content: fullSystemPrompt },
+        { role: 'user', content: cleanedMessage },
+      ],
+      max_completion_tokens: maxTokens,
+    };
+
+    console.warn(`[callOpenAI] 送出請求 model=${model}, role=${systemRole}, reasoning=${reasoning}, maxTokens=${maxTokens}`);
+
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: cleanedMessage },
-        ],
-        temperature: 0.7,
-        max_tokens: 500, // 限制回應長度
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -126,17 +162,28 @@ export async function callOpenAI(userMessage: string): Promise<string> {
     }
 
     const data = await response.json();
-    
+
+    console.warn(`[callOpenAI] 收到回應 finishReason=${data.choices?.[0]?.finish_reason}, contentType=${typeof data.choices?.[0]?.message?.content}, contentLength=${data.choices?.[0]?.message?.content?.length}, usage=${JSON.stringify(data.usage)}`);
+    console.warn(`[callOpenAI] 回應內容前200字: ${(data.choices?.[0]?.message?.content || '(null)').substring(0, 200)}`);
+    console.warn(`[callOpenAI] message keys: ${data.choices?.[0]?.message ? Object.keys(data.choices[0].message).join(',') : 'N/A'}`);
+
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-      console.error('[callOpenAI] 回應格式錯誤:', data);
+      console.error('[callOpenAI] 回應格式錯誤:', JSON.stringify(data).substring(0, 500));
       throw new Error('OpenAI API 回應格式錯誤：缺少 choices 或 message 欄位');
     }
 
-    // 取得回應內容
-    let responseText = data.choices[0].message.content || '';
-    
-    // 清理回應內容（移除多餘的空白和換行）
-    responseText = responseText.trim();
+    const msg = data.choices[0].message;
+
+    // 處理模型拒絕回應的情況
+    if (msg.refusal) {
+      console.warn('[callOpenAI] 模型拒絕回應:', msg.refusal);
+      return '🤖 抱歉，我無法回應這個問題。';
+    }
+
+    // 取得回應內容（推理模型的 content 可能為 null）
+    let responseText = (msg.content || '').trim();
+
+    console.warn(`[callOpenAI] 最終回應 length=${responseText.length}, isEmpty=${responseText.length === 0}, 前100字="${responseText.substring(0, 100)}"`);
     
     // 如果回應太長，截斷到合理長度（Telegram 訊息限制約 4096 字元）
     if (responseText.length > 4000) {

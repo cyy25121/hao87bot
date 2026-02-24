@@ -1,6 +1,8 @@
 import { TelegramUpdate, TelegramMessage } from '../types';
 import { StatsService } from '../services/statsService';
 import { callAI, checkAIHealth } from '../services/aiService';
+import { activateContext, deactivateContext, isContextActive, buildConversationContext, storeChatHistory } from '../services/contextService';
+import { convertToMarkdownV2 } from '../utils/markdownV2';
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -21,15 +23,25 @@ function getEnvVar(name: string): string {
 async function sendMessage(
   chatId: number,
   text: string,
-  replyToMessageId?: number
+  replyToMessageId?: number,
+  parseMode: 'HTML' | 'MarkdownV2' | '' = 'HTML'
 ): Promise<void> {
+  // 防止發送空訊息（Telegram API 會拒絕）
+  if (!text || text.trim().length === 0) {
+    console.warn('[sendMessage] 嘗試發送空訊息，已跳過');
+    return;
+  }
+
   const botToken = getEnvVar('TELEGRAM_BOT_TOKEN');
 
   const body: any = {
     chat_id: chatId,
     text: text,
-    parse_mode: 'HTML',
   };
+
+  if (parseMode) {
+    body.parse_mode = parseMode;
+  }
 
   // 如果有指定回覆的訊息 ID，加入回覆參數
   if (replyToMessageId !== undefined) {
@@ -285,7 +297,7 @@ function isBotMentioned(message: TelegramMessage, botUsername?: string): boolean
   // 檢查是否為指令（以 / 開頭）
   if (trimmedText.startsWith('/')) {
     // 如果是 /set-activate-th 或 /health，不算被呼叫（會另外處理）
-    if (trimmedText.startsWith('/set-activate-th') || trimmedText.startsWith('/health')) {
+    if (trimmedText.startsWith('/set-activate-th') || trimmedText.startsWith('/health') || trimmedText.startsWith('/remember') || trimmedText.startsWith('/forget') || trimmedText.startsWith('/show')) {
       return false;
     }
     // 其他指令都算被呼叫
@@ -502,6 +514,40 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     return;
   }
 
+  // 處理 /remember 命令（僅在群組中使用）
+  if (message.text && (message.text.trim() === '/remember' || message.text.trim().startsWith('/remember@'))) {
+    if (chat.type !== 'group' && chat.type !== 'supergroup') {
+      await sendMessage(chatId, '❌ /remember 指令只能在群組中使用');
+      return;
+    }
+
+    try {
+      await activateContext(chatId);
+      await sendMessage(chatId, '已啟動上下文記憶模式，將持續 1 小時 ⏰\n\n在這段時間內 @我 時，我會參考最近的群組對話來回應。');
+    } catch (error) {
+      console.error('Error activating context:', error);
+      await sendMessage(chatId, '❌ 無法啟動上下文記憶模式，請稍後再試');
+    }
+    return;
+  }
+
+  // 處理 /forget 命令（僅在群組中使用）
+  if (message.text && (message.text.trim() === '/forget' || message.text.trim().startsWith('/forget@'))) {
+    if (chat.type !== 'group' && chat.type !== 'supergroup') {
+      await sendMessage(chatId, '❌ /forget 指令只能在群組中使用');
+      return;
+    }
+
+    try {
+      await deactivateContext(chatId);
+      await sendMessage(chatId, '已關閉上下文記憶模式 🔇');
+    } catch (error) {
+      console.error('Error deactivating context:', error);
+      await sendMessage(chatId, '❌ 無法關閉上下文記憶模式，請稍後再試');
+    }
+    return;
+  }
+
   // 處理 /show 命令（僅在群組中使用）
   if (message.text && (message.text.trim() === '/show' || message.text.trim().startsWith('/show@'))) {
     // 只處理群組訊息
@@ -583,11 +629,22 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     // 初始化群組（如果不存在）
     const group = await StatsService.getOrCreateGroup(groupId, chat.title || 'Unknown Group');
 
+    // 儲存所有群組訊息到聊天歷史（供上下文記憶模式使用）
+    const msgText = message.text || message.caption || message.sticker?.emoji || '';
+    if (msgText) {
+      await storeChatHistory(groupId, {
+        userId,
+        userName: from!.username || from!.first_name,
+        text: msgText,
+        type: message.sticker ? 'sticker' : message.photo ? 'photo' : 'text',
+      });
+    }
+
     // 檢查是否被呼叫
     const botUsername = await getBotUsername();
     const globalThreshold = await StatsService.getGlobalThreshold();
     const isActivated = group.messageCount >= globalThreshold;
-    
+
     if (isBotMentioned(message, botUsername)) {
       // 記錄機器人被呼叫的次數
       await StatsService.incrementBotMentionCount(groupId);
@@ -601,16 +658,49 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       // 新版：使用 AI 回應（根據設定的 provider）
       try {
         const userMessage = message.text || message.caption || '';
-        const aiResponse = await callAI(userMessage);
-        // 回覆到原始訊息，讓使用者知道機器人在回應哪個訊息
-        await sendMessage(chatId, aiResponse, message.message_id);
+
+        // 檢查上下文模式是否啟動，若啟動則注入對話歷史
+        let conversationContext: string | undefined;
+        const contextActive = await isContextActive(groupId);
+        if (contextActive) {
+          conversationContext = await buildConversationContext(groupId);
+        }
+
+        console.warn(`[handleMessage] 呼叫 AI userMessage="${userMessage.substring(0, 100)}", hasContext=${!!conversationContext}`);
+        const aiResponse = await callAI(userMessage, conversationContext);
+        console.warn(`[handleMessage] AI 回應 length=${aiResponse?.length}, isEmpty=${!aiResponse || aiResponse.trim().length === 0}, 前100字="${(aiResponse || '').substring(0, 100)}"`);
+        // 防止 AI 回傳空字串
+        const replyText = aiResponse && aiResponse.trim()
+          ? aiResponse
+          : '🤖 （我想了一下，但沒想到要說什麼）';
+        // 嘗試以 MarkdownV2 格式發送，失敗則降級為純文字，最後不帶 reply 發送
+        try {
+          const mdv2Text = convertToMarkdownV2(replyText);
+          await sendMessage(chatId, mdv2Text, message.message_id, 'MarkdownV2');
+        } catch (mdError) {
+          console.warn('[handleMessage] MarkdownV2 發送失敗，降級為純文字:', mdError);
+          try {
+            await sendMessage(chatId, replyText, message.message_id, '');
+          } catch (plainError) {
+            console.warn('[handleMessage] 帶 reply 純文字發送也失敗，改為不帶 reply:', plainError);
+            await sendMessage(chatId, replyText, undefined, '');
+          }
+        }
+
+        // 將 bot 回應也存入聊天歷史，讓上下文記憶包含 AI 的回應
+        await storeChatHistory(groupId, {
+          userId: 0,
+          userName: botUsername || 'hao87bot',
+          text: replyText,
+          type: 'text',
+        });
       } catch (error) {
         console.error('[handleMessage] AI 錯誤:', error);
         // 如果 AI 服務失敗，回覆錯誤訊息（也回覆到原始訊息）
-        const errorMessage = error instanceof Error 
+        const errorMessage = error instanceof Error
           ? `🤖 抱歉，我現在無法回應。錯誤：${error.message}`
           : '🤖 抱歉，我現在無法回應，請稍後再試。';
-        await sendMessage(chatId, errorMessage, message.message_id);
+        await sendMessage(chatId, errorMessage, message.message_id, '');
       }
       return; // 不處理其他邏輯
     }

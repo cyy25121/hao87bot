@@ -9,6 +9,15 @@ export interface GroupStats {
   lastImageAt: number;
   threshold: number;
   createdAt: FirebaseFirestore.Timestamp;
+  contextActiveUntil?: FirebaseFirestore.Timestamp | null;
+}
+
+export interface ChatHistoryEntry {
+  userId: number;
+  userName: string;
+  text: string;
+  timestamp: FirebaseFirestore.Timestamp;
+  type: 'text' | 'photo' | 'sticker' | 'link';
 }
 
 export interface StoredMessage {
