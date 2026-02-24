@@ -94,10 +94,12 @@
                   </template>
                   <!-- OpenAI 模型選項 -->
                   <template v-else>
-                    <option value="gpt-4o">gpt-4o</option>
-                    <option value="gpt-4o-mini">gpt-4o-mini (預設)</option>
-                    <option value="gpt-4-turbo">gpt-4-turbo</option>
-                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                    <option value="gpt-5.2">gpt-5.2 (最新旗艦)</option>
+                    <option value="gpt-5-mini">gpt-5-mini (預設)</option>
+                    <option value="gpt-5-nano">gpt-5-nano (最快)</option>
+                    <option value="o4-mini">o4-mini (推理)</option>
+                    <option value="o3-mini">o3-mini (推理)</option>
+                    <option value="gpt-4.1-mini">gpt-4.1-mini (經濟)</option>
                   </template>
                 </select>
                 <input
@@ -132,6 +134,36 @@
               ></textarea>
               <p style="font-size: 10px; color: #ccc; margin-top: 5px">
                 設定 AI 的個性和回應風格。留空則使用預設提示詞。
+              </p>
+            </div>
+            <div class="form-group">
+              <label for="maxChatHistory">聊天記錄保留上限</label>
+              <input
+                id="maxChatHistory"
+                v-model.number="maxChatHistory"
+                type="number"
+                min="1"
+                class="nes-input"
+                :disabled="isSavingAISettings"
+                style="width: 100%"
+              />
+              <p style="font-size: 10px; color: #ccc; margin-top: 5px">
+                資料庫最多保留的聊天記錄筆數（預設 50）
+              </p>
+            </div>
+            <div class="form-group">
+              <label for="contextMessageLimit">AI 上下文訊息數</label>
+              <input
+                id="contextMessageLimit"
+                v-model.number="contextMessageLimit"
+                type="number"
+                min="1"
+                class="nes-input"
+                :disabled="isSavingAISettings"
+                style="width: 100%"
+              />
+              <p style="font-size: 10px; color: #ccc; margin-top: 5px">
+                注入 AI 時取用的最近訊息筆數（預設 20）
               </p>
             </div>
             <button
@@ -262,6 +294,8 @@ const aiProvider = ref<'ollama' | 'openai'>('ollama');
 const aiSystemPrompt = ref<string>('');
 const aiModel = ref<string>('qwen3:8b');
 const customModel = ref<string>('');
+const maxChatHistory = ref<number>(50);
+const contextMessageLimit = ref<number>(20);
 const isSavingAISettings = ref(false);
 
 // 監聽器
@@ -307,6 +341,8 @@ const loadSettings = () => {
         const provider = (data?.aiProvider || 'ollama') as 'ollama' | 'openai';
         aiProvider.value = provider;
         aiSystemPrompt.value = data?.aiSystemPrompt || '';
+        maxChatHistory.value = data?.maxChatHistory || 50;
+        contextMessageLimit.value = data?.contextMessageLimit || 20;
         const model = data?.aiModel || (provider === 'openai' ? 'gpt-4o-mini' : 'qwen3:8b');
         
         if (provider === 'ollama') {
@@ -319,12 +355,12 @@ const loadSettings = () => {
           }
         } else {
           // OpenAI 模型
-          const openaiModels = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
+          const openaiModels = ['gpt-5.2', 'gpt-5-mini', 'gpt-5-nano', 'o4-mini', 'o3-mini', 'gpt-4.1-mini'];
           if (openaiModels.includes(model)) {
             aiModel.value = model;
           } else {
-            // 如果不在預設列表中，使用 gpt-4o-mini 作為預設
-            aiModel.value = 'gpt-4o-mini';
+            // 如果不在預設列表中，使用 gpt-5-mini 作為預設
+            aiModel.value = 'gpt-5-mini';
           }
           customModel.value = '';
         }
@@ -335,6 +371,8 @@ const loadSettings = () => {
         aiSystemPrompt.value = '';
         aiModel.value = 'qwen3:8b';
         customModel.value = '';
+        maxChatHistory.value = 50;
+        contextMessageLimit.value = 20;
       }
     },
     (err) => {
@@ -407,6 +445,8 @@ const saveAISettings = async () => {
       updates.aiSystemPrompt = '';
     }
     updates.aiModel = modelToSave;
+    updates.maxChatHistory = maxChatHistory.value;
+    updates.contextMessageLimit = contextMessageLimit.value;
 
     if (settingsDoc.exists()) {
       await updateDoc(settingsRef, updates);

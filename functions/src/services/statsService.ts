@@ -551,7 +551,7 @@ export class StatsService {
   /**
    * 取得 AI 設定
    */
-  static async getAISettings(): Promise<{ systemPrompt: string; model: string; provider: 'ollama' | 'openai' }> {
+  static async getAISettings(): Promise<{ systemPrompt: string; model: string; provider: 'ollama' | 'openai'; maxChatHistory: number; contextMessageLimit: number }> {
     try {
       const db = getDb();
       const settingsRef = db.collection('settings').doc('global');
@@ -561,12 +561,14 @@ export class StatsService {
         const data = settingsDoc.data();
         const provider = data?.aiProvider || 'ollama';
         // 根據 provider 設定預設模型
-        const defaultModel = provider === 'openai' ? 'gpt-4o-mini' : 'qwen3:8b';
-        
+        const defaultModel = provider === 'openai' ? 'gpt-5-mini' : 'qwen3:8b';
+
         return {
           systemPrompt: data?.aiSystemPrompt || '',
           model: data?.aiModel || defaultModel,
           provider: provider as 'ollama' | 'openai',
+          maxChatHistory: data?.maxChatHistory || 50,
+          contextMessageLimit: data?.contextMessageLimit || 20,
         };
       }
 
@@ -575,6 +577,8 @@ export class StatsService {
         systemPrompt: '',
         model: 'qwen3:8b',
         provider: 'ollama',
+        maxChatHistory: 50,
+        contextMessageLimit: 20,
       };
     } catch (error) {
       console.error(`[StatsService] Error in getAISettings:`, error);
@@ -583,6 +587,8 @@ export class StatsService {
         systemPrompt: '',
         model: 'qwen3:8b',
         provider: 'ollama',
+        maxChatHistory: 50,
+        contextMessageLimit: 20,
       };
     }
   }
@@ -590,11 +596,11 @@ export class StatsService {
   /**
    * 設定 AI 設定
    */
-  static async setAISettings(settings: { systemPrompt?: string; model?: string; provider?: 'ollama' | 'openai' }): Promise<void> {
+  static async setAISettings(settings: { systemPrompt?: string; model?: string; provider?: 'ollama' | 'openai'; maxChatHistory?: number; contextMessageLimit?: number }): Promise<void> {
     try {
       const db = getDb();
       const settingsRef = db.collection('settings').doc('global');
-      
+
       const updates: any = {};
       if (settings.systemPrompt !== undefined) {
         updates.aiSystemPrompt = settings.systemPrompt;
@@ -604,6 +610,12 @@ export class StatsService {
       }
       if (settings.provider !== undefined) {
         updates.aiProvider = settings.provider;
+      }
+      if (settings.maxChatHistory !== undefined) {
+        updates.maxChatHistory = settings.maxChatHistory;
+      }
+      if (settings.contextMessageLimit !== undefined) {
+        updates.contextMessageLimit = settings.contextMessageLimit;
       }
 
       await settingsRef.set(updates, { merge: true });

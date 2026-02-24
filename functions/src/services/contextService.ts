@@ -6,10 +6,9 @@
 import * as admin from 'firebase-admin';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { ChatHistoryEntry } from '../types';
+import { StatsService } from './statsService';
 
 const CONTEXT_DURATION_MS = 60 * 60 * 1000; // 1 小時
-const MAX_CHAT_HISTORY = 50;
-const CONTEXT_MESSAGE_LIMIT = 20;
 
 function getDb() {
   return getFirestore(admin.app(), 'hao87bot');
@@ -99,7 +98,8 @@ export async function storeChatHistory(
   });
 
   // 清理超過上限的舊訊息
-  const snapshot = await historyRef.orderBy('timestamp', 'desc').offset(MAX_CHAT_HISTORY).get();
+  const { maxChatHistory } = await StatsService.getAISettings();
+  const snapshot = await historyRef.orderBy('timestamp', 'desc').offset(maxChatHistory).get();
   if (!snapshot.empty) {
     const batch = db.batch();
     snapshot.docs.forEach((doc) => batch.delete(doc.ref));
@@ -112,7 +112,7 @@ export async function storeChatHistory(
  */
 export async function getRecentGroupMessages(
   groupId: number,
-  limit: number = CONTEXT_MESSAGE_LIMIT
+  limit: number = 20
 ): Promise<ChatHistoryEntry[]> {
   const db = getDb();
   const historyRef = db
@@ -133,7 +133,8 @@ export async function getRecentGroupMessages(
  * 將聊天歷史格式化為 AI prompt 可用的上下文字串
  */
 export async function buildConversationContext(groupId: number): Promise<string | undefined> {
-  const messages = await getRecentGroupMessages(groupId);
+  const { contextMessageLimit } = await StatsService.getAISettings();
+  const messages = await getRecentGroupMessages(groupId, contextMessageLimit);
 
   if (messages.length === 0) return undefined;
 

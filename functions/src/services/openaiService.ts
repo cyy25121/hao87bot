@@ -53,10 +53,10 @@ async function getSystemPrompt(): Promise<string> {
 async function getModel(): Promise<string> {
   try {
     const settings = await StatsService.getAISettings();
-    return settings.model || 'gpt-4o-mini';
+    return settings.model || 'gpt-5-mini';
   } catch (error) {
     console.error('[getModel] Error getting AI settings:', error);
-    return 'gpt-4o-mini';
+    return 'gpt-5-mini';
   }
 }
 

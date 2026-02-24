@@ -523,7 +523,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
     try {
       await activateContext(chatId);
-      await sendMessage(chatId, '已啟動上下文記憶模式，將持續 1 小時 ⏰\n\n在這段時間內 @我 時，我會參考最近的群組對話來回應。');
+      await sendMessage(chatId, '已啟動上下文記憶模式，將持續 1 小時 ⏰\n\n在這段時間內，我只會記住 @我 的訊息和我的回應作為上下文。請 @我 來跟我對話吧！');
     } catch (error) {
       console.error('Error activating context:', error);
       await sendMessage(chatId, '❌ 無法啟動上下文記憶模式，請稍後再試');
@@ -629,17 +629,6 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     // 初始化群組（如果不存在）
     const group = await StatsService.getOrCreateGroup(groupId, chat.title || 'Unknown Group');
 
-    // 儲存所有群組訊息到聊天歷史（供上下文記憶模式使用）
-    const msgText = message.text || message.caption || message.sticker?.emoji || '';
-    if (msgText) {
-      await storeChatHistory(groupId, {
-        userId,
-        userName: from!.username || from!.first_name,
-        text: msgText,
-        type: message.sticker ? 'sticker' : message.photo ? 'photo' : 'text',
-      });
-    }
-
     // 檢查是否被呼叫
     const botUsername = await getBotUsername();
     const globalThreshold = await StatsService.getGlobalThreshold();
@@ -658,6 +647,14 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       // 新版：使用 AI 回應（根據設定的 provider）
       try {
         const userMessage = message.text || message.caption || '';
+
+        // 將使用者 tag bot 的訊息存入聊天歷史
+        await storeChatHistory(groupId, {
+          userId,
+          userName: from!.username || from!.first_name,
+          text: userMessage,
+          type: 'text',
+        });
 
         // 檢查上下文模式是否啟動，若啟動則注入對話歷史
         let conversationContext: string | undefined;
