@@ -63,7 +63,7 @@ async function getModel(): Promise<string> {
 /**
  * 建立完整的提示詞
  */
-async function buildPrompt(userMessage: string, conversationContext?: string): Promise<string> {
+async function buildPrompt(userMessage: string, conversationContext?: string, replyContext?: string): Promise<string> {
   // 移除 bot mention（@botname）和指令符號
   let cleanedMessage = userMessage
     .replace(/@\w+/g, '') // 移除所有 @mention
@@ -72,11 +72,19 @@ async function buildPrompt(userMessage: string, conversationContext?: string): P
 
   const systemPrompt = await getSystemPrompt();
 
+  let parts = [systemPrompt];
+
   if (conversationContext) {
-    return `${systemPrompt}\n\n${conversationContext}\n\n${cleanedMessage}`;
+    parts.push(conversationContext);
   }
 
-  return `${systemPrompt}\n\n${cleanedMessage}`;
+  if (replyContext) {
+    parts.push(`（以下是使用者引用的訊息）\n${replyContext}\n（以上是被引用的訊息）`);
+  }
+
+  parts.push(cleanedMessage);
+
+  return parts.join('\n\n');
 }
 
 /**
@@ -96,11 +104,11 @@ function getOllamaBaseUrl(): string {
 /**
  * 呼叫 Ollama API 生成回應
  */
-export async function callOllama(userMessage: string, conversationContext?: string): Promise<string> {
+export async function callOllama(userMessage: string, conversationContext?: string, replyContext?: string): Promise<string> {
   const baseUrl = getOllamaBaseUrl();
   const apiUrl = `${baseUrl}/api/generate`;
 
-  const prompt = await buildPrompt(userMessage, conversationContext);
+  const prompt = await buildPrompt(userMessage, conversationContext, replyContext);
   const model = await getModel();
 
   console.warn(`[callOllama] 開始呼叫 model=${model}, promptLength=${prompt.length}, hasContext=${!!conversationContext}`);

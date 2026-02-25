@@ -95,7 +95,7 @@ function getOpenAIApiKey(): string {
 /**
  * 呼叫 OpenAI API 生成回應
  */
-export async function callOpenAI(userMessage: string, conversationContext?: string): Promise<string> {
+export async function callOpenAI(userMessage: string, conversationContext?: string, replyContext?: string): Promise<string> {
   const apiKey = getOpenAIApiKey();
   const apiUrl = 'https://api.openai.com/v1/chat/completions';
 
@@ -103,12 +103,17 @@ export async function callOpenAI(userMessage: string, conversationContext?: stri
   const model = await getModel();
   const cleanedMessage = cleanUserMessage(userMessage);
 
-  console.warn(`[callOpenAI] 開始呼叫 model=${model}, cleanedMessage="${cleanedMessage.substring(0, 80)}", hasContext=${!!conversationContext}`);
+  console.warn(`[callOpenAI] 開始呼叫 model=${model}, cleanedMessage="${cleanedMessage.substring(0, 80)}", hasContext=${!!conversationContext}, hasReplyContext=${!!replyContext}`);
 
   // 如果有上下文，將其附加到系統提示詞
-  const fullSystemPrompt = conversationContext
+  let fullSystemPrompt = conversationContext
     ? `${systemPrompt}\n\n${conversationContext}`
     : systemPrompt;
+
+  // 在 user message 前加入引用區塊
+  const userContent = replyContext
+    ? `（以下是使用者引用的訊息）\n${replyContext}\n（以上是被引用的訊息）\n\n${cleanedMessage}`
+    : cleanedMessage;
 
   try {
     const reasoning = isReasoningModel(model);
@@ -123,7 +128,7 @@ export async function callOpenAI(userMessage: string, conversationContext?: stri
       model: model,
       messages: [
         { role: systemRole, content: fullSystemPrompt },
-        { role: 'user', content: cleanedMessage },
+        { role: 'user', content: userContent },
       ],
       max_completion_tokens: maxTokens,
     };

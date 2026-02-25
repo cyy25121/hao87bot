@@ -290,10 +290,10 @@ async function handleLegacyMentionResponse(
 /**
  * 檢查 bot 是否被呼叫
  */
-function isBotMentioned(message: TelegramMessage, botUsername?: string): boolean {
+function isBotMentioned(message: TelegramMessage, botUsername?: string, botUserId?: number): boolean {
   const text = message.text || '';
   const trimmedText = text.trim();
-  
+
   // 檢查是否為指令（以 / 開頭）
   if (trimmedText.startsWith('/')) {
     // 如果是 /set-activate-th 或 /health，不算被呼叫（會另外處理）
@@ -303,7 +303,7 @@ function isBotMentioned(message: TelegramMessage, botUsername?: string): boolean
     // 其他指令都算被呼叫
     return true;
   }
-  
+
   // 檢查 entities 中是否有 bot_command
   if (message.entities) {
     const hasBotCommand = message.entities.some(e => e.type === 'bot_command');
@@ -316,19 +316,38 @@ function isBotMentioned(message: TelegramMessage, botUsername?: string): boolean
       return true;
     }
   }
-  
+
   // 檢查文字中是否 @mention bot（非指令情況）
   if (botUsername && text.includes(`@${botUsername}`)) {
     return true;
   }
-  
+
+  // 檢查 text_mention entity（使用者透過點擊名字 tag bot）
+  if (botUserId && message.entities) {
+    const hasTextMention = message.entities.some(
+      e => e.type === 'text_mention' && e.user?.id === botUserId
+    );
+    if (hasTextMention) {
+      return true;
+    }
+  }
+
+  // 檢查是否回覆 bot 的訊息
+  if (botUserId && message.reply_to_message?.from?.id === botUserId) {
+    return true;
+  }
+
   return false;
 }
 
 /**
- * 取得 bot username
+ * 取得 bot 資訊（username 和 id），帶 module-level 快取
  */
-async function getBotUsername(): Promise<string | undefined> {
+let cachedBotInfo: { username: string; id: number } | undefined;
+
+async function getBotInfo(): Promise<{ username: string; id: number } | undefined> {
+  if (cachedBotInfo) return cachedBotInfo;
+
   try {
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     if (!botToken) {
@@ -337,13 +356,14 @@ async function getBotUsername(): Promise<string | undefined> {
 
     const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
     const data = await response.json();
-    
+
     if (data.ok && data.result) {
-      return data.result.username;
+      cachedBotInfo = { username: data.result.username, id: data.result.id };
+      return cachedBotInfo;
     }
     return undefined;
   } catch (error) {
-    console.error('[getBotUsername] Error:', error);
+    console.error('[getBotInfo] Error:', error);
     return undefined;
   }
 }
@@ -630,11 +650,13 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     const group = await StatsService.getOrCreateGroup(groupId, chat.title || 'Unknown Group');
 
     // 檢查是否被呼叫
-    const botUsername = await getBotUsername();
+    const botInfo = await getBotInfo();
+    const botUsername = botInfo?.username;
+    const botUserId = botInfo?.id;
     const globalThreshold = await StatsService.getGlobalThreshold();
     const isActivated = group.messageCount >= globalThreshold;
 
-    if (isBotMentioned(message, botUsername)) {
+    if (isBotMentioned(message, botUsername, botUserId)) {
       // 記錄機器人被呼叫的次數
       await StatsService.incrementBotMentionCount(groupId);
       
@@ -648,11 +670,25 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       try {
         const userMessage = message.text || message.caption || '';
 
-        // 將使用者 tag bot 的訊息存入聊天歷史
+        // 提取回覆上下文
+        let replyContext: string | undefined;
+        if (message.reply_to_message) {
+          const rt = message.reply_to_message;
+          const replyText = rt.text || rt.caption || '';
+          if (replyText) {
+            const author = rt.from?.username || rt.from?.first_name || '某人';
+            replyContext = `[${author}]: ${replyText}`;
+          }
+        }
+
+        // 將使用者 tag bot 的訊息存入聊天歷史（附帶引用資訊）
+        const storedText = replyContext
+          ? `[回覆 ${replyContext}] ${userMessage}`
+          : userMessage;
         await storeChatHistory(groupId, {
           userId,
           userName: from!.username || from!.first_name,
-          text: userMessage,
+          text: storedText,
           type: 'text',
         });
 
@@ -663,8 +699,8 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
           conversationContext = await buildConversationContext(groupId);
         }
 
-        console.warn(`[handleMessage] 呼叫 AI userMessage="${userMessage.substring(0, 100)}", hasContext=${!!conversationContext}`);
-        const aiResponse = await callAI(userMessage, conversationContext);
+        console.warn(`[handleMessage] 呼叫 AI userMessage="${userMessage.substring(0, 100)}", hasContext=${!!conversationContext}, hasReplyContext=${!!replyContext}`);
+        const aiResponse = await callAI(userMessage, conversationContext, replyContext);
         console.warn(`[handleMessage] AI 回應 length=${aiResponse?.length}, isEmpty=${!aiResponse || aiResponse.trim().length === 0}, 前100字="${(aiResponse || '').substring(0, 100)}"`);
         // 防止 AI 回傳空字串
         const replyText = aiResponse && aiResponse.trim()
